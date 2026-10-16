@@ -1,0 +1,5 @@
+[
+  {"arxiv": "2106.10199", "title": "BitFit: Simple Parameter-efficient Fine-tuning for Transformer-based Masked Language-models", "focus": "参数高效微调：比例分母、比较基线、数据规模、消融与条件经验"},
+  {"arxiv": "2212.04089", "title": "Editing Models with Task Arithmetic", "focus": "模型编辑与合并：共同初始化、任务向量、缩放系数、冲突与跨任务可比性"},
+  {"arxiv": "2310.06770", "title": "SWE-bench: Can Language Models Resolve Real-World GitHub Issues?", "focus": "评测论文：任务定义、数据构建、解决率、工具条件与评测局限"}
+]

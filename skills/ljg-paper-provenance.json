@@ -1,0 +1,17 @@
+{
+  "repository": "lijigang/ljg-skills",
+  "commit": "dae8ba8e8f513ac1be0697c3a8495b8894c82278",
+  "branch": "md",
+  "files_sha256": {
+    "LICENSE": "24807dd5a0d4ef9f3c94e197e80ad2b6198b3381339b9bc3ab78cfc36eee4502",
+    "SKILL.md": "c132e99cab6616a2d985da0f959844ab80cd3175fca560a85891702a5133ddfc",
+    "ReadingGuide.md": "46639f38f4ae450963df08987435a518f05d1c1b08d07a378d64225adc27b8d3",
+    "evals/plain-language-pair.json": "450c211ac58e471b7d3aa1abb1d89c1be0c4cb8532354e9b9deaf8509d69422b",
+    "evals/evals.json": "84479e9c52d3997b9cbf2cc596a6b671833e894bb5fb59408166f83dbe92d6bc",
+    "references/paper-map.md": "da47ea21bc8bc9a03b191933f2ef04ed6b2b1801dc33fbef8eacb14266cc078a",
+    "references/template.md": "413f4bdd9b3d5f00dcb1ce5b662d7c91293fde919e9abdc26999d69bade37fd5",
+    "scripts/validate_note.ts": "01966d337b8a0dc9c5baef414086307578c67b3ac0a7db3fc131c51e16bd83c8",
+    "scripts/paper_map_compat.ts": "ca4ee070d4a2a8934adc32a89e388bbca3021763501b1294b698a9f5c522cb6c",
+    "scripts/validate_note.test.ts": "c4551535fb110cd945c8ba102b53beb98b28349e190cafcd01d5159d0bcc0a20"
+  }
+}

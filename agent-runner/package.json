@@ -1,0 +1,32 @@
+{
+  "name": "@paper-reader/agent-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc && esbuild src/validate-ljg.ts --bundle --platform=node --format=esm --external:yaml --define:import.meta.main=false --outfile=dist/validate-ljg.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "pretest": "npm run build"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@sinclair/typebox": "0.34.48",
+    "ipaddr.js": "2.5.0",
+    "undici": "8.11.2",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "esbuild": "0.28.2",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "esbuild": "0.28.2"
+  }
+}

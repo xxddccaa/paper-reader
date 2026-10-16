@@ -1,0 +1,65 @@
+x-app: &app
+  image: paper-reader:${PAPER_READER_IMAGE_TAG:-local}
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+    args:
+      INSTALL_DOCLING: ${PAPER_READER_INSTALL_DOCLING:-true}
+  restart: unless-stopped
+  working_dir: /app/backend
+  user: "${PAPER_READER_UID:-10001}:${PAPER_READER_GID:-10001}"
+  env_file:
+    - ${PAPER_READER_RUNTIME_DIR:?Use scripts/manage.py}/config/app.env
+  environment:
+    PAPER_READER_RUNTIME_DIR: /runtime
+    HF_HOME: /runtime/cache/huggingface
+    XDG_CACHE_HOME: /runtime/cache
+  volumes:
+    - ${PAPER_READER_RUNTIME_DIR}/storage:/runtime/storage
+    - ${PAPER_READER_RUNTIME_DIR}/logs:/runtime/logs
+    - ${PAPER_READER_RUNTIME_DIR}/cache:/runtime/cache
+    - ${PAPER_READER_RUNTIME_DIR}/tmp:/runtime/tmp
+  depends_on:
+    postgres:
+      condition: service_healthy
+  stop_grace_period: 45s
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  postgres:
+    image: postgres:18.1-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Initialize runtime first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Initialize runtime first}
+      POSTGRES_DB: ${POSTGRES_DB:?Initialize runtime first}
+      PGDATA: /var/lib/postgresql/18/docker
+    volumes:
+      - ${PAPER_READER_RUNTIME_DIR}/postgres:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+  api:
+    <<: *app
+    ports:
+      - "${PAPER_READER_BIND_HOST:-127.0.0.1}:${PAPER_READER_PORT:-8000}:8000"
+    command: [python, -m, uvicorn, app.main:app, --host, 0.0.0.0, --port, '8000']
+  worker:
+    <<: *app
+    command: [python, -m, app.worker]

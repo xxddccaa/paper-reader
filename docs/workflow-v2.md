@@ -1,0 +1,85 @@
+# Workflow v2 implementation contract
+
+This contract supersedes the monolithic-only parts of contracts.md. User approved the staged architecture and requested implementation plus real-model tests on 2026-10-13. Preserve all tenant/auth/secret/lease protections and the reference project.
+
+## Exclusive implementation ownership
+
+| Owner | Files | Outcome / gate |
+|---|---|---|
+| backend | models.py, schemas.py, api.py, migrations, tests/test_api.py | API models, compatible migration, tenant-scoped packet/stage output |
+| operations (workflow worker) | worker.py, NEW workflow.py, tests/test_workflow.py, tests/test_worker*.py | Python-owned phases, durable checkpoints, resume/retry/revise, fenced publication and budgets |
+| pipeline | pipeline.py, source_tools.py, NEW evidence.py, tests/test_source*.py | exact evidence validation, patch tool, trusted native review records/cache |
+| runner | agent-runner/**, skills/ADAPTATIONS.md (not upstream bytes) | one Pi session per guided phase, bounded inputs, native review integration |
+| frontend | web/** | mode selection, stage results/reuse, structured claims and honest native status |
+| lead | docs/**, README, tests/** outside backend/web/runner | integration, evaluation harness, independent review |
+
+No edits to another owner's files without a handoff. Tests use separate *_test databases at local port36625; never mutate live evaluation DBs. Lead alone runs real providers. Communicate contract refinements before implementing incompatible changes.
+
+## Data/API
+
+- Reading.workflow_mode: guided|native. New API requests default guided; migration backfills existing readings to native, then changes default to guided. Legacy snapshots with no mode mean native.
+- ReadingIn/ListOut/Detail include workflow_mode; job snapshot freezes it and retry preserves it.
+- Job.stage_records JSON list default []; JobOut exposes it. Entries: {name,status,input_hash?,output_hash?,attempt?,reused_from?,started_at?,completed_at?,duration_ms?,usage?,error?}. Status pending|running|succeeded|failed|reused|skipped. Host writes these using owned lease; never trust runner progress to mark success.
+- Revision.reading_packet JSON dict default {}; RevisionOut exposes it. Existing native revisions remain {}.
+- Retry injects retry_of_job_id from the authorized old job into snapshot. No client-supplied checkpoint path or job ID. Checkpoint reuse must check same workspace and reading plus semantic input hash.
+- Existing native tests/snapshots lacking workflow_mode retain native behavior. Guided publication never claims native skill completion: verification.workflow={mode:'guided',native_status:'not_requested',stages:...}; native mode still requires authentic seal and original checks.
+- Guided source factual gaps, unresolved evidence/required review issues must not be published as succeeded. Missing unrequested external papers is not inherently an error. Host sets cross_paper_status=not_requested only when no related questions/claims required them; failures of requested cross-paper checks remain explicit partial/failed.
+
+## Structured reading packet (plain JSON, version 1)
+
+Packet: {version:1,paper_title:string,research_question:string,claims:Claim[],open_questions:Question[],limitations:string[]}.
+Claim: {id:string,kind:'contribution'|'method'|'result'|'lesson'|'limitation'|'related_work',statement:string,basis:'observation'|'author_hypothesis'|'inference',conditions:{model:string,dataset:string,split:string,metric:string,baseline:string,budget:string},evidence:Evidence[],numeric_comparison?:{value:number,baseline_value:number,relation:'higher'|'lower'|'equal',unit:string}|null}.
+Evidence: {id:string,source_id:string,section_id:string,quote:string,page?:number}. IDs C1 etc for claims, E1 etc for evidence. Shared evidence IDs permitted only with exactly identical content. Host resolves source title/url/verified, never accepts model verified flags. Evidence must be a meaningful exact source clause (min12 chars) from the declared source/section/page. Record truthful missing conditions as empty strings, never fabricate a baseline. Lesson/inference must cite its supporting observations and preserve limits; quote matching alone does not prove the inference.
+Typography matching may normalize alphabetic PDF ligatures (U+FB00–U+FB06), NFC composition, whitespace and case, then must map the match back to and store the actual original source slice. Broad NFKC is prohibited because it can conflate superscripts/footnotes with numeric values. No fuzzy matching or removal of punctuation, numbers, qualifiers or footnote markers. A different source/section/page is still an error. Guided rules v2.3 records this policy change in cache fingerprints.
+An additional conservative match handles a missing/inserted space between an isolated Greek/mathematical alphabetic glyph and an explicitly recognized prose word (for example `𝛾input tokens` and `𝛾 input tokens`). It preserves mathematical symbol identity, rejects ambiguous variable/function contexts and always returns the original contiguous source slice. It does not tolerate changed numbers, operators, negation, arbitrary joined words or different source locators.
+Question: {question:string,search_query:string,reason:string}, maximum3. These express specific unresolved comparisons or counterexamples; no mandatory generic related-paper search.
+The main paper's own description of related work may remain a `related_work` claim with main-source evidence and clear attribution. That kind alone does not require downloading another paper. Explicit open questions and claims using external-source evidence require the corresponding actual external checks; neither a generic related-work label nor a model's passing verdict is proof of retrieval.
+Bounds: 1–20 claims, at most3 evidence per claim, bounded strings/overall payload; sensible limits are enforced by host and schema. Server checks numeric relation arithmetic; semantic comparison/causality still reviewed independently.
+
+NEW evidence.py exports validate_packet(packet, library) -> (clean_packet, errors:list[str]); packet_evidence(packet,library) -> evidence_index compatible with existing products; apply_claim_patch(packet, patch) -> updated_packet with strict unique ID/existing-ID checks. Patch:{claims:Claim[],remove_claim_ids:string[]} replaces ONLY listed existing claims, retaining all other fields. Empty resulting packets rejected.
+Host-owned workflow files and evidence/checkpoint/review reports cannot be written via model tools. Program serialization is deterministic; it does not invent claims or passing checks.
+
+## Guided execution: Python controls sequence
+
+Worker/NEW workflow.py controls phases, starts a fresh Node/Pi process for each model phase, retains one task lease/timeout and total budget. SourceLibrary/Pipeline remain host objects across phases. Refactor existing process pump into a reusable phase call; native mode continues through existing runReading. Every finished phase is atomically checkpointed and recorded before next phase begins.
+
+1. source: prepare once; expose structured original sections with source IDs/page IDs and coverage. Do not dump the whole original into every stage. Source content + parsing/rules version fingerprints determine reuse.
+2. extract: model reads selected skill reading guidance and original sections, emits Packet. Guidance mode explicitly says native workflow NOT executed. Parser/source policy preserved (HTML first where supported; PDFs otherwise).
+3. host validates Packet quotes/conditions/numeric relations. If necessary, run at most three adaptive packet_repair proposals under the existing shared task timeout, cancellation and tool budget. Each round receives current errors, failed-attempt feedback and targeted retained original passages. Apply and validate each delta inside its checkpoint before recording success; retain useful progress for the next round. Unchanged, malformed or still-invalid proposals remain failed attempts. The normal valid path adds no model call.
+4. fact_review: fresh model original+packet. It may search/fetch max3 related papers only for explicit open_questions. Output {passed:boolean,issues:[{claim_id:string,message:string}],checked_claim_ids:string[],suggestions:string[]}. Require all packet claims covered. Only one content repair/re-review cycle is permitted; its repair proposals use the same bounded adaptive evidence validation. New facts require source evidence, and the final independent review must still pass. No fake passing verdicts.
+5. compose: fresh model validated packet+both templates+instruction; emits {brief_markdown,full_markdown}. Host derives evidence_index from packet. No full original/native note/context history by default. Ground all statements in packet; 600–1000-char Chinese brief target. Preserve optional qualitative facts without fabricated precision.
+6. product_review: fresh model product+packet+template, read_source on demand. Output {passed:boolean,issues:string[],checks:object}. Review coverage, template, numeric conditions and inference labels. One product_repair delta/re-review maximum; unresolved substantive issues cannot succeed.
+7. publish: independently check evidence/citations plus trusted workflow completion. Native completion gate applies only to native mode. Store packet, stage records, sources, real reviews/provenance and immutable revision artifacts.
+
+Product patch: {edits:[{field:'brief_markdown'|'full_markdown',old_text:string,new_text:string}]}. Each old_text must have exactly one occurrence in the frozen product, apply atomically, no source/packet edits. Packet changes invalidate composition/review; display-only instruction can reuse checked packet.
+
+For revisions, revision_plan phase returns {scope:'presentation'|'facts',reason:string}. Facts/new comparison requests rerun extract/relevant checks with original+previous packet+instruction; presentation reuses only verified prior packet/fact checks and regenerates compose/review. Final review must reject newly invented facts outside packet. Legacy or incompatible prior packet/model/rule fingerprints fall back to fact extraction. Original revision immutable.
+
+## Phase JSONL protocol
+
+Existing RunSpec adds workflow_mode?:guided|native and phase?:{name:'extract'|'packet_repair'|'fact_review'|'compose'|'product_review'|'product_repair'|'revision_plan',input:object}. Absent phase uses existing native runReading.
+index.ts emits same {type:'result',result:<phase object>} envelope for a phase. Host knows expected schema and independently validates. Generic model cannot choose next stage or write host checkpoint RPCs.
+phase.input carries named source_sections, packet, review, product, skill_guidance, template, instruction, previous_packet as relevant. source_sections are original section objects {id,source_id,text,page?,section?}; preserve full coverage or fail explicitly if it cannot fit bounded context. Small/normal papers supplied once to extract and fact_review; writer gets packet only. Runner may read_source on demand. No native scripts or arbitrary artifact writes in guided phases.
+packet_repair additionally accepts repair_context:{policy_version,round,max_rounds,errors,unchanged_errors,diagnostics,affected_claim_ids,strategy,previous_attempt}. Diagnostics identify affected claims/evidence and suggested locators; suggestions are unverified candidates for rereading, never acceptance evidence. Repair source_sections contain at most 24 KB of original excerpts with source_offset/source_end character offsets and an excerpt flag. read_source remains available for missing context. Preserve unaffected claims and never remove material merely to hide a required failure. This recovery policy also applies to v3 segment, fact, figure and merge repairs; v3 generic phase retries do not multiply the three-proposal limit.
+Default per-phase output caps: extract6000, fact_review4000, compose5000, product_review3000, repairs4000, revision_plan512 (also respect model max_tokens). Per-phase timeout bounded by task remaining, at most300s; stage tool caps within remaining global budget. Truncation/error is explicit and cannot mark success. A successful structured submission should end the phase without another model round-trip (implement/test safe session abort after completed valid tool result).
+
+## Checkpoints, reuse and observability
+
+Guided runner internal RPC `host_phase_submission {}` reserves one executed structured-submission attempt against the host phase/task tool budget before semantic validation. It is never exposed as a model tool. Invalid exact-match/schema-after-execution attempts spend this allowance too; the successful final result envelope is not charged twice. Legacy result-only runners retain their single result charge. SDK rejections before the tool execution callback remain bounded by the phase deadline and do not count as executed tools.
+
+Input hashes include stage schema/rules version, source content, selected skill commit, public model config (NO key), and relevant upstream semantic outputs/template/instruction. Stages without changed inputs may be reused; unrelated metadata timestamps do not invalidate. A failed stage never becomes cached success. Verify saved output hash/schema before reuse. Context/time/budget limits remain enforced on reused/recovered jobs. Cache is task/revision scoped and tenant checked, not global.
+Adaptive repair inputs include their own policy version, preserving compatible source/extraction reuse without a global workflow version bump. Repair checkpoint reuse reruns full patch/evidence validation. Additional attempts use stage-name suffixes _2 and _3; the UI labels their round numbers and says 本轮未通过 while the task continues. Exhausted repair/task budgets remain explicit failures; no publication check is waived.
+Retain source/finished checkpoints through worker crash and explicit retry. API supplies authorized retry_of_job_id, worker checks tenant/reading and safely copies internal artifacts. Changes in template invalidate compose onward; claims/evidence/model/rules changes invalidate relevant review/downstream stages. Fencing prevents expired workers publishing/updating stages.
+
+## Local patches and native record optimization
+
+Pipeline model tool patch_artifact:{path,expected_sha256,edits:[{old_text,new_text}]} -> {path,sha256,bytes}. Exact unique match, bounded edits, compare-and-swap hash, atomic update, valid final JSON if .json. Reuse all write_artifact path/protection/seal rules. Source, trusted workflow/review/log files remain immutable to model tools. Read_artifact includes sha256 (whole artifact) to support patches.
+
+Native ljg-paper: host, not model, records real readability findings in the exact existing independent-reader section of paper-map, using structured reader_record fields returned by the fresh reviewer. Never insert PASS before actual passing review. Original upstream files/validator remain unchanged. Host binds attestation to final exact bytes after its deterministic write, preventing another full review caused ONLY by host-generated records.
+readability review adds reader_record with string fields: missing_premises,narrative,first_memory,chapter_links,research_question,contribution,mechanism,experiment,limitations,understanding,reconstruction. Host maps actual answers to known labels, emits the four upstream PASS labels only when passed+no issues and all required answers present. Model instructions say do not rewrite host-generated records.
+Host RPCs (never exposed as model tools): host_native_review_lookup {note_path,map_path?,policy_key} -> cached independent quality/readability reports only if note/source/policy hashes match; content review additionally depends on semantic map excluding ONLY host-owned reader-record section. Missing/untrusted records never excluded from checks at seal. host_native_attest accepts policy_key and actual reports, fills reader records where supported, binds exact final hashes and returns updated map hash/recorded status. Separate content/readability cache scope allows map-only semantic repair to retain readability when note unchanged. Model changes to evidence/note still invalidate relevant reviews.
+Compatibility and safety tests must show metadata-only writes do not rerun models while body/claim/source/model/policy changes do. Native final validator must run on the host-updated pair before sealing; no native gate is waived.
+
+## Validation gate
+
+Backend migrations/auth/mode/snapshot tests; actual worker phase JSONL tests for crash recovery, retry, stale ownership, limits, stage records, revise reuse and tampered checkpoints; evidence/patch/native-cache tests; real Pi phase protocol tests including stop-after-submit and Qwen; frontend mode/phase/packet tests; independent read-only integrated review. Lead runs same BitFit PDF on provided Qwen3.8-27B with explicit qwen-chat-template in a fresh isolated runtime, then one presentation revision and real browser/API view if published. No manufactured model outputs or relaxed checks to obtain success.

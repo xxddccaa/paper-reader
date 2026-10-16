@@ -1,0 +1,14 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+playwright-report/
+test-results/
+.env
+*.egg-info/
+.coverage
+htmlcov/
+!deploy/.env.example
